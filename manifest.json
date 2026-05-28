@@ -1,0 +1,51 @@
+{
+    "name": "gpt_image_2_plugin",
+    "version": "1.0.1",
+    "description": "基于 OpenAI GPT Image 2 /images/generations 接口的图片生成插件",
+    "author": "qf",
+    "categories": [
+        "fun"
+    ],
+    "tags": [
+        "image",
+        "generation",
+        "gpt-image-2",
+        "dalle"
+    ],
+    "dependencies": {
+        "plugins": [],
+        "components": []
+    },
+    "include": [
+        {
+            "component_type": "action",
+            "component_name": "gpt_image_draw",
+            "dependencies": []
+        },
+        {
+            "component_type": "action",
+            "component_name": "gpt_image_selfie",
+            "dependencies": []
+        },
+        {
+            "component_type": "command",
+            "component_name": "gpt_image",
+            "dependencies": []
+        },
+        {
+            "component_type": "service",
+            "component_name": "gpt_image_2_generator",
+            "dependencies": []
+        },
+        {
+            "component_type": "config",
+            "component_name": "config",
+            "dependencies": []
+        }
+    ],
+    "entry_point": "plugin.py",
+    "min_core_version": "1.0.0",
+    "python_dependencies": [
+        "aiohttp"
+    ]
+}
