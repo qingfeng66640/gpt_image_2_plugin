@@ -28,7 +28,7 @@ class GptImage2Plugin(BasePlugin):
 
     plugin_name: str = "gpt_image_2_plugin"
     plugin_description: str = "基于 GPT Image 2 /images/generations 接口的图片生成插件"
-    plugin_version: str = "1.0.0"
+    plugin_version: str = "1.0.2"
     config_file_name: str = "config.toml"
 
     configs = [GptImage2Config]

@@ -46,7 +46,7 @@ class GptImage2Service(BaseService):
 
     service_name: str = "gpt_image_2_generator"
     service_description: str = "GPT Image 2 图片生成服务"
-    version: str = "1.0.0"
+    version: str = "1.0.2"
 
     _task_queue: asyncio.Queue[tuple[ImageTaskFactory, asyncio.Future[ImageResult]]] = asyncio.Queue()
     _queue_worker_started: bool = False

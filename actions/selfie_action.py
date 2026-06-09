@@ -28,6 +28,7 @@ class GptImageSelfieAction(BaseGptImageAction):
     )
     primary_action: bool = False
     chat_type: ChatType = ChatType.ALL
+    associated_types: list[str] = ["image"]
 
     async def execute(
         self,

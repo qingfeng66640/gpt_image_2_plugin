@@ -62,6 +62,12 @@ default_size = "1024x1024"
 
 `/gpt_image` 不会阻塞消息事件处理器。命令收到后会立即提交后台任务，图片生成完成后再异步发送，避免被事件总线短超时取消。
 
+## Neo-MoFox 1.2.0-rc 兼容性
+
+插件的两个 LLM Action 已显式声明 `associated_types = ["image"]`。在 1.2.0-rc 及之后版本中，核心会根据当前适配器写入消息 `extra.format_info.accept_format` 的内容过滤 Action；如果适配器未声明支持 `image`，自然语言触发的画图/自拍 Action 将不会加载到本轮可用工具中。
+
+本插件不实现 adapter，也不构造 `Envelope`，因此 `format_info.accept_format` 需要由当前使用的 adapter 提供。NapCat adapter 改名为 OneBot adapter 不影响本插件源码，但运行环境需要迁移对应 adapter 配置。
+
 关键日志：
 
 - `后台生图任务已提交`
