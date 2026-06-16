@@ -1,6 +1,6 @@
 {
     "name": "gpt_image_2_plugin",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "description": "基于 OpenAI GPT Image 2 /images/generations 接口的图片生成插件",
     "author": "qf",
     "categories": ["tool", "fun"],
