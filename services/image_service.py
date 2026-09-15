@@ -39,6 +39,7 @@ SUPPORTED_OUTPUT_FORMATS = {"png", "jpeg", "webp"}
 SUPPORTED_BACKGROUNDS = {"auto", "transparent", "opaque"}
 SUPPORTED_MODERATIONS = {"auto", "low"}
 REDACTED_RESPONSE_KEYS = {"b64_json", "api_key", "authorization", "token"}
+MIME_TYPES_BY_EXTENSION = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}
 
 
 class GptImage2Service(BaseService):
@@ -278,63 +279,92 @@ class GptImage2Service(BaseService):
         if not self.request_url:
             return False, "请求 URL 没配置，联系管理员看看", None
 
-        self.last_request_time = time.time()
-        payload = self.construct_edit_payload(
-            source_image_base64=source_image_base64,
-            prompt=prompt,
-            user_id=user_id,
-            size=size,
-        )
-        logger.info(f"GPT Image 2 编辑请求 payload: {json.dumps(self._redact_response(payload), ensure_ascii=False)}")
+        decoded = self._decode_source_image(source_image_base64)
+        if decoded is None:
+            logger.error("来源图片无法解析为 base64 图片数据，已取消编辑请求")
+            return False, "来源图片数据无法解析（base64 解码失败）", None
+
+        image_bytes, filename, mime_type = decoded
+        final_size = self._normalize_config_size(size or self.default_size)
 
         # /images/edits 端点的响应格式和 /images/generations 一样
         edit_url = self.request_url.rstrip("/").replace("/generations", "/edits")
+        logger.info(
+            f"GPT Image 2 编辑请求: url={edit_url}, model={self.model}, size={final_size}, "
+            f"image={len(image_bytes)} bytes ({mime_type}), prompt={prompt[:80]!r}"
+        )
+
+        self.last_request_time = time.time()
         return await self._submit_generation(
-            payload=payload,
+            payload=lambda: self.construct_edit_form(
+                image_bytes=image_bytes,
+                filename=filename,
+                mime_type=mime_type,
+                prompt=prompt,
+                user_id=user_id,
+                size=final_size,
+            ),
             api_key=api_key,
             from_command=False,
             request_url=edit_url,
         )
 
-    def construct_edit_payload(
+    def construct_edit_form(
         self,
-        source_image_base64: str,
+        *,
+        image_bytes: bytes,
+        filename: str,
+        mime_type: str,
         prompt: str,
         user_id: str,
-        size: str | None = None,
-    ) -> dict[str, Any]:
-        """构建 GPT 图片模型的 /images/edits 请求体。
+        size: str,
+    ) -> aiohttp.FormData:
+        """构建 GPT 图片模型的 /images/edits 请求表单。
 
-        中转站格式要求：images 数组，每项含 image_url 字段（data: URL）。
+        官方 edits 协议要求以 multipart/form-data 上传图片文件；发送 JSON 会被上游拒绝。
+        FormData 是一次性对象（发送时会清空字段），每次请求都必须重新构建。
         """
-        # 去掉 "base64|" 前缀，构造 data: URL
-        image_data = source_image_base64
-        if "|" in image_data and not image_data.startswith("http"):
-            image_data = image_data.split("|", 1)[1]
-
-        # 补 data: URL 前缀
-        if not image_data.startswith("data:"):
-            image_data = f"data:image/png;base64,{image_data}"
-
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "images": [{"image_url": image_data}],
-            "prompt": prompt,
-            "n": self.n,
-            "size": self._normalize_config_size(size or self.default_size),
-            "quality": self.quality,
-            "output_format": self.output_format,
-            "background": self.background,
-            "moderation": self.moderation,
-        }
+        form = aiohttp.FormData()
+        form.add_field("image", image_bytes, filename=filename, content_type=mime_type)
+        form.add_field("model", self.model)
+        form.add_field("prompt", prompt)
+        form.add_field("n", str(self.n))
+        form.add_field("size", size)
+        form.add_field("quality", self.quality)
+        form.add_field("output_format", self.output_format)
+        form.add_field("background", self.background)
+        form.add_field("moderation", self.moderation)
 
         if self.output_format in {"jpeg", "webp"}:
-            payload["output_compression"] = self.output_compression
+            form.add_field("output_compression", str(self.output_compression))
 
         if user_id:
-            payload["user"] = str(user_id)
+            form.add_field("user", str(user_id))
 
-        return payload
+        return form
+
+    def _decode_source_image(self, source_image_base64: str) -> tuple[bytes, str, str] | None:
+        """解析 ``base64|``、data URL 或裸 base64 形式的来源图片。
+
+        Returns:
+            ``(图片字节, 上传文件名, MIME 类型)``；无法解码为图片数据时返回 ``None``。
+        """
+        data = source_image_base64.strip()
+        if data.startswith("data:"):
+            _, _, data = data.partition(",")
+        elif "|" in data:
+            data = data.split("|", 1)[1]
+
+        try:
+            image_bytes = base64.b64decode(data, validate=True)
+        except (binascii.Error, ValueError):
+            return None
+        if not image_bytes:
+            return None
+
+        extension = self._extension_for_bytes(image_bytes) or self._extension_for_format(self.output_format)
+        mime_type = MIME_TYPES_BY_EXTENSION.get(extension, "image/png")
+        return image_bytes, f"source.{extension}", mime_type
 
     def construct_payload(self, prompt: str, user_id: str, size: str | None = None) -> dict[str, Any]:
         """构建 GPT 图片模型的 /images/generations 请求体。"""
@@ -359,17 +389,20 @@ class GptImage2Service(BaseService):
 
     async def _submit_generation(
         self,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | Callable[[], aiohttp.FormData],
         api_key: str,
         *,
         from_command: bool = False,
         request_url: str | None = None,
     ) -> ImageResult:
-        """提交生成请求并保存返回的 base64 图片。"""
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        """提交生成/编辑请求并保存返回的 base64 图片。
+
+        ``payload`` 为 dict 时按 JSON 发送；为可调用对象时按 multipart 表单发送，
+        且每次尝试（含重试）都重新构建，因为 FormData 发送后会被清空。
+        """
+        headers = {"Authorization": f"Bearer {api_key}"}
+        if not callable(payload):
+            headers["Content-Type"] = "application/json"
 
         url = request_url or self.request_url
         connector = aiohttp.TCPConnector() if self.proxy else None
@@ -378,7 +411,11 @@ class GptImage2Service(BaseService):
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             for attempt in range(self.max_retries + 1):
                 try:
-                    request_kwargs: dict[str, Any] = {"json": payload, "headers": headers}
+                    request_kwargs: dict[str, Any] = {"headers": headers}
+                    if callable(payload):
+                        request_kwargs["data"] = payload()
+                    else:
+                        request_kwargs["json"] = payload
                     if self.proxy:
                         request_kwargs["proxy"] = self.proxy
 
